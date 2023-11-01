@@ -1,75 +1,35 @@
 package com.bmo.moviesinforeview.router;
 
 import com.bmo.moviesinforeview.domain.MovieReview;
-import com.bmo.moviesinforeview.handler.ReviewHandler;
 import com.bmo.moviesinforeview.repository.MovieReviewRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
-import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.context.ContextConfiguration;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.isA;
-import static org.mockito.Mockito.when;
 
-@WebFluxTest
-@ContextConfiguration(classes = {ReviewRouter.class, ReviewHandler.class})
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 @AutoConfigureWebTestClient
-class ReviewRouterTest {
-
-    @MockBean
-    private MovieReviewRepository repository;
+class ReviewRouterIntegrationTest {
 
     @Autowired
     private WebTestClient webTestClient;
 
+    @Autowired
+    private MovieReviewRepository repository;
+
     private static final String API_URL = "/v1/reviews";
 
-    @Test
-    void when_POST_new_review_then_create_it() {
-        var review = MovieReview.builder()
-                .id(null)
-                .moveInfoId("1SW")
-                .comment("Best movie ever")
-                .rating(10.0)
-                .build();
-
-        when(repository.save(isA(MovieReview.class)))
-                .thenReturn(Mono.just(MovieReview.builder()
-                        .id(UUID.randomUUID().toString())
-                        .moveInfoId("1SW")
-                        .comment("Best movie ever")
-                        .rating(10.0)
-                        .build()));
-
-        webTestClient.post()
-                .uri(API_URL)
-                .bodyValue(review)
-                .exchange()
-                .expectStatus()
-                .isCreated()
-                .expectBody(MovieReview.class)
-                .consumeWith(movieReviewEntityExchangeResult -> {
-                    MovieReview responseBody = movieReviewEntityExchangeResult.getResponseBody();
-                    assertNotNull(responseBody.getId());
-                    assertEquals("1SW", responseBody.getMoveInfoId());
-                    assertEquals("Best movie ever", responseBody.getComment());
-                    assertEquals(10.0, responseBody.getRating());
-                });
-    }
-
-    @Test
-    void when_GET_without_id_then_return_all_movies_review() {
+    @BeforeEach
+    void setUp() {
         var reviewList = List.of(
                 MovieReview.builder()
                         .id(null)
@@ -90,16 +50,47 @@ class ReviewRouterTest {
                         .rating(1.0)
                         .build()
         );
+        repository.saveAll(reviewList).blockLast();
+    }
 
-        when(repository.findAll()).thenReturn(Flux.fromIterable(reviewList));
+    @AfterEach
+    void tearDown() {
+        repository.deleteAll().block();
+    }
 
+    @Test
+    void when_POST_new_review_then_create_it() {
+        var review = MovieReview.builder()
+                .id(null)
+                .moveInfoId("1SW")
+                .comment("Best movie ever")
+                .rating(10.0)
+                .build();
+
+        webTestClient.post()
+                .uri(API_URL)
+                .bodyValue(review)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(MovieReview.class)
+                .consumeWith(movieReviewEntityExchangeResult -> {
+                    MovieReview responseBody = movieReviewEntityExchangeResult.getResponseBody();
+                    assertNotNull(responseBody.getId());
+                    assertEquals("1SW", responseBody.getMoveInfoId());
+                    assertEquals("Best movie ever", responseBody.getComment());
+                    assertEquals(10.0, responseBody.getRating());
+                });
+    }
+
+    @Test
+    void when_GET_without_id_then_return_all_movies_review() {
         webTestClient.get()
                 .uri(API_URL)
                 .exchange()
                 .expectStatus()
                 .isOk()
                 .expectBodyList(MovieReview.class)
-                .hasSize(3)
                 .consumeWith(listEntityExchangeResult -> {
                     List<MovieReview> movieReviewList = listEntityExchangeResult.getResponseBody();
                     movieReviewList.forEach(movieReview -> System.out.println(movieReview));
@@ -109,29 +100,18 @@ class ReviewRouterTest {
 
     @Test
     void when_PUT_then_update_movie_review() {
-        final var movieReviewId = UUID.randomUUID().toString();
-
-        final MovieReview movieReview = MovieReview.builder()
-                .id(movieReviewId)
+        MovieReview movieReview = repository.save(MovieReview.builder()
                 .moveInfoId("1SW")
                 .comment("Best movie ever")
                 .rating(10.0)
-                .build();
+                .build()
+        ).block();
 
-        when(repository.findById(Mockito.anyString()))
-                .thenReturn(Mono.just(
-                        MovieReview.builder()
-                                .id(movieReviewId)
-                                .moveInfoId("1SW")
-                                .comment("Nice movie")
-                                .rating(5.0)
-                                .build()
-                ));
-        when(repository.save(isA(MovieReview.class)))
-                .thenReturn(Mono.just(movieReview));
+        movieReview.setRating(2);
+        movieReview.setComment("Sucks");
 
         webTestClient.put()
-                .uri(API_URL + "/{id}", movieReviewId)
+                .uri(API_URL + "/{id}", movieReview.getId())
                 .bodyValue(movieReview)
                 .exchange()
                 .expectStatus()
@@ -139,8 +119,8 @@ class ReviewRouterTest {
                 .expectBody(MovieReview.class)
                 .consumeWith(movieReviewEntityExchangeResult -> {
                     MovieReview responseBody = movieReviewEntityExchangeResult.getResponseBody();
-                    assertEquals("Best movie ever", responseBody.getComment());
-                    assertEquals(10.0, responseBody.getRating());
+                    assertEquals("Sucks", responseBody.getComment());
+                    assertEquals(2, responseBody.getRating());
                 });
     }
 
@@ -151,8 +131,6 @@ class ReviewRouterTest {
                 .comment("Best movie ever")
                 .rating(10.0)
                 .build();
-
-        when(repository.findById(anyString())).thenReturn(Mono.empty());
 
         webTestClient.put()
                 .uri(API_URL + "/EST12312")
@@ -170,11 +148,10 @@ class ReviewRouterTest {
                 .rating(10.0)
                 .build();
 
-        when(repository.findById(anyString())).thenReturn(Mono.just(movieReview));
-        when(repository.deleteById(anyString())).thenReturn(Mono.empty());
+        MovieReview movieReviewCreated = repository.save(movieReview).block();
 
         webTestClient.delete()
-                .uri(API_URL + "/{id}", "123124")
+                .uri(API_URL + "/{id}", movieReviewCreated.getId())
                 .exchange()
                 .expectStatus()
                 .isNoContent();
@@ -182,17 +159,6 @@ class ReviewRouterTest {
 
     @Test
     void when_GET_review_by_movieInfoId_then_return_data() {
-
-        var moviesReviewList = List.of(MovieReview.builder()
-                .id(UUID.randomUUID().toString())
-                .moveInfoId("1SW")
-                .comment("Nice movie")
-                .rating(5.0)
-                .build());
-
-        when(repository.findReviewsByMoveInfoId(Mockito.anyString()))
-                .thenReturn(Flux.fromIterable(moviesReviewList));
-
         webTestClient.get()
                 .uri(uriBuilder -> uriBuilder.path(API_URL)
                         .queryParam("moveInfoId", "1SW")
@@ -201,7 +167,7 @@ class ReviewRouterTest {
                 .expectStatus()
                 .isOk()
                 .expectBodyList(MovieReview.class)
-                .hasSize(1)
+                .hasSize(3)
                 .consumeWith(listEntityExchangeResult -> {
                     List<MovieReview> movieReviewList = listEntityExchangeResult.getResponseBody();
                     assertFalse(movieReviewList.isEmpty());
@@ -210,9 +176,6 @@ class ReviewRouterTest {
 
     @Test
     void when_GET_review_by_movieInfoId_inexistent_then_not_found() {
-        when(repository.findReviewsByMoveInfoId(Mockito.anyString()))
-                .thenReturn(Flux.empty());
-
         webTestClient.get()
                 .uri(uriBuilder -> uriBuilder.path(API_URL)
                         .queryParam("moveInfoId", "21SW")
@@ -223,4 +186,5 @@ class ReviewRouterTest {
                 .expectBodyList(MovieReview.class)
                 .hasSize(0);
     }
+
 }
