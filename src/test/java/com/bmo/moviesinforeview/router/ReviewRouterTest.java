@@ -1,6 +1,7 @@
 package com.bmo.moviesinforeview.router;
 
 import com.bmo.moviesinforeview.domain.MovieReview;
+import com.bmo.moviesinforeview.exceptionhandler.GlobalErrorHandler;
 import com.bmo.moviesinforeview.handler.ReviewHandler;
 import com.bmo.moviesinforeview.repository.MovieReviewRepository;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,7 @@ import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.when;
 
 @WebFluxTest
-@ContextConfiguration(classes = {ReviewRouter.class, ReviewHandler.class})
+@ContextConfiguration(classes = {ReviewRouter.class, ReviewHandler.class, GlobalErrorHandler.class})
 @AutoConfigureWebTestClient
 class ReviewRouterTest {
 
@@ -66,6 +67,25 @@ class ReviewRouterTest {
                     assertEquals("Best movie ever", responseBody.getComment());
                     assertEquals(10.0, responseBody.getRating());
                 });
+    }
+
+    @Test
+    void when_POST_new_review_with_incorrect_data_then_bad_request() {
+        var review = MovieReview.builder()
+                .id(null)
+                .moveInfoId(null)
+                .comment("Best movie ever")
+                .rating(-10.0)
+                .build();
+
+        webTestClient.post()
+                .uri(API_URL)
+                .bodyValue(review)
+                .exchange()
+                .expectStatus()
+                .isBadRequest()
+                .expectBody(String.class)
+                .isEqualTo("rating.move: value must not be null, rating.negative: rating is negative, pls provide a positive value");
     }
 
     @Test
@@ -145,6 +165,40 @@ class ReviewRouterTest {
     }
 
     @Test
+    void when_PUT_with_invalid_payload_then_bad_request() {
+        final var movieReviewId = UUID.randomUUID().toString();
+
+        final MovieReview movieReview = MovieReview.builder()
+                .id(movieReviewId)
+                .moveInfoId(null)
+                .comment("Best movie ever")
+                .rating(-10.0)
+                .build();
+
+        when(repository.findById(Mockito.anyString()))
+                .thenReturn(Mono.just(
+                        MovieReview.builder()
+                                .id(movieReviewId)
+                                .moveInfoId("1SW")
+                                .comment("Nice movie")
+                                .rating(5.0)
+                                .build()
+                ));
+
+        webTestClient.put()
+                .uri(API_URL + "/{id}", movieReviewId)
+                .bodyValue(movieReview)
+                .exchange()
+                .expectStatus()
+                .isBadRequest()
+                .expectBody(String.class)
+                .consumeWith(stringEntityExchangeResult -> {
+                    final String responseBody = stringEntityExchangeResult.getResponseBody();
+                    assertEquals("rating.move: value must not be null, rating.negative: rating is negative, pls provide a positive value", responseBody);
+                });
+    }
+
+    @Test
     void when_PUT_with_inexistent_id_then_return_not_found() {
         MovieReview movieReview = MovieReview.builder()
                 .moveInfoId("1SW")
@@ -159,7 +213,12 @@ class ReviewRouterTest {
                 .bodyValue(movieReview)
                 .exchange()
                 .expectStatus()
-                .isNotFound();
+                .isNotFound()
+                .expectBody(String.class)
+                .consumeWith(stringEntityExchangeResult -> {
+                    final String responsBody = stringEntityExchangeResult.getResponseBody();
+                    assertEquals("Movie Review Not found", responsBody);
+                });
     }
 
     @Test
@@ -178,6 +237,28 @@ class ReviewRouterTest {
                 .exchange()
                 .expectStatus()
                 .isNoContent();
+    }
+
+    @Test
+    void when_DELETE_inexistent_moview_review_then_not_found() {
+        MovieReview movieReview = MovieReview.builder()
+                .moveInfoId("1231SW")
+                .comment("Best movie ever")
+                .rating(10.0)
+                .build();
+
+        when(repository.findById(anyString())).thenReturn(Mono.empty());
+
+        webTestClient.delete()
+                .uri(API_URL + "/{id}", "123124")
+                .exchange()
+                .expectStatus()
+                .isNotFound()
+                .expectBody(String.class)
+                .consumeWith(stringEntityExchangeResult -> {
+                    final String responsBody = stringEntityExchangeResult.getResponseBody();
+                    assertEquals("Movie Review Not found", responsBody);
+                });
     }
 
     @Test
@@ -219,8 +300,11 @@ class ReviewRouterTest {
                         .build())
                 .exchange()
                 .expectStatus()
-                .isOk()
-                .expectBodyList(MovieReview.class)
-                .hasSize(0);
+                .isNotFound()
+                .expectBody(String.class)
+                .consumeWith(stringEntityExchangeResult -> {
+                    final String responsBody = stringEntityExchangeResult.getResponseBody();
+                    assertEquals("Movie Review Not found", responsBody);
+                });
     }
 }

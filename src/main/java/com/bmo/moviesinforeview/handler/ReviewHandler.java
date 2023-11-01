@@ -1,7 +1,12 @@
 package com.bmo.moviesinforeview.handler;
 
 import com.bmo.moviesinforeview.domain.MovieReview;
+import com.bmo.moviesinforeview.exception.ReviewDataException;
+import com.bmo.moviesinforeview.exception.ReviewNotFoundException;
 import com.bmo.moviesinforeview.repository.MovieReviewRepository;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.server.ServerRequest;
@@ -10,18 +15,24 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class ReviewHandler {
 
     private MovieReviewRepository movieReviewRepository;
 
-    public ReviewHandler(MovieReviewRepository movieReviewRepository) {
+    private Validator validator;
+
+    public ReviewHandler(MovieReviewRepository movieReviewRepository, Validator validator) {
         this.movieReviewRepository = movieReviewRepository;
+        this.validator = validator;
     }
 
     public Mono<ServerResponse> addReview(ServerRequest request) {
         return request.bodyToMono(MovieReview.class)
+                .doOnNext(this::validateBody)
                 .flatMap(movieReviewRepository::save)
                 .flatMap(ServerResponse.status(HttpStatus.CREATED)::bodyValue);
     }
@@ -39,10 +50,12 @@ public class ReviewHandler {
 
     public Mono<ServerResponse> updateReview(ServerRequest request) {
         final String id = request.pathVariable("id");
-        Mono<MovieReview> movieReviewFoundById = movieReviewRepository.findById(id).log();
+        Mono<MovieReview> movieReviewFoundById = movieReviewRepository.findById(id).log()
+                .switchIfEmpty(Mono.error(new ReviewNotFoundException("Movie Review Not found")));
 
         return movieReviewFoundById
                 .flatMap(movieReview -> request.bodyToMono(MovieReview.class)
+                        .doOnNext(this::validateBody)
                         .map(requestReview -> {
                             movieReview.setComment(requestReview.getComment());
                             movieReview.setRating(requestReview.getRating());
@@ -51,13 +64,13 @@ public class ReviewHandler {
                         .flatMap(movieReviewRepository::save)
                         .log()
                         .flatMap(savedMovieReview -> ServerResponse.ok().bodyValue(savedMovieReview))
-                )
-              .switchIfEmpty(ServerResponse.notFound().build());
+                );
     }
 
     public Mono<ServerResponse> deleteReview(ServerRequest request) {
         final String id = request.pathVariable("id");
-        Mono<MovieReview> movieReviewFoundById = movieReviewRepository.findById(id).log();
+        Mono<MovieReview> movieReviewFoundById = movieReviewRepository.findById(id).log()
+                .switchIfEmpty(Mono.error(new ReviewNotFoundException("Movie Review Not found")));
 
         return movieReviewFoundById
                 .flatMap(movieReview -> movieReviewRepository.deleteById(id))
@@ -65,8 +78,21 @@ public class ReviewHandler {
     }
 
     public Mono<ServerResponse> getReviewByMoveInfoId(String moveInfoId) {
-        Flux<MovieReview> movieReviewFlux = movieReviewRepository.findReviewsByMoveInfoId(moveInfoId).log();
+        Flux<MovieReview> movieReviewFlux = movieReviewRepository.findReviewsByMoveInfoId(moveInfoId).log()
+                .switchIfEmpty(Mono.error(new ReviewNotFoundException("Movie Review Not found")));
 
         return ServerResponse.ok().body(movieReviewFlux, MovieReview.class);
+    }
+
+    private void validateBody(MovieReview movieReview) {
+        Set<ConstraintViolation<MovieReview>> constraintViolations = validator.validate(movieReview);
+
+        if (constraintViolations.size() > 0) {
+            final String errors = constraintViolations.stream()
+                    .map(ConstraintViolation::getMessage)
+                    .sorted()
+                    .collect(Collectors.joining(", "));
+            throw new ReviewDataException(errors);
+        }
     }
 }
