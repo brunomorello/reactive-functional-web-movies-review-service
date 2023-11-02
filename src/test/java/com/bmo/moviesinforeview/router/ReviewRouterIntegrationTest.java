@@ -182,9 +182,7 @@ class ReviewRouterIntegrationTest {
                         .build())
                 .exchange()
                 .expectStatus()
-                .isOk()
-                .expectBodyList(MovieReview.class)
-                .hasSize(0);
+                .isNotFound();
     }
 
 }
